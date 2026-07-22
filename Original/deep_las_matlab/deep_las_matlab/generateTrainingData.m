@@ -29,11 +29,11 @@ for snrdB = SNRdB_list
         n = sqrt(sigma2/2) * (randn(Nr,1) + 1i*randn(Nr,1));
         y = H*x + n;
 
-        xhat_mmse = initEstimate(y, H, sigma2, M, 'mmse');
+        xhat_mmse_soft = initEstimateSoft(y, H, sigma2, M, 'mmse');  % FIX: soft, not hard-decided
         [~, LLR_true] = softOutputLAS(y, H, sigma2, M, 'mmse', cfg.maxLASIter);
 
         yhat = [real(y); imag(y)];
-        xm   = [real(xhat_mmse); imag(xhat_mmse)];
+        xm   = [real(xhat_mmse_soft); imag(xhat_mmse_soft)];
         llrVec = reshape(LLR_true.', [], 1);   % Nt*log2(M) x 1
 
         Yhat_all = [Yhat_all, yhat]; %#ok<AGROW>

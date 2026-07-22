@@ -12,8 +12,9 @@
 % pooled sequences per FFT_len and retrain trainGRU.m accordingly.
 
 clear; clc;
-SNRdB_range = 0:2:10;
-nBlocks = 300;
+SNRdB_range = 0:1:10;   % finer step (was 0:2:10) -- smoother curve
+nBlocks = 800;          % more samples per SNR point (was 300)
+nRuns = 3;              % repeat and average across independent runs
 M = 4;
 
 antennaCounts = [4 8 16 32];   % paper sweeps up to 256; start smaller,
@@ -21,31 +22,33 @@ antennaCounts = [4 8 16 32];   % paper sweeps up to 256; start smaller,
 figure; hold on; set(gca,'YScale','log'); grid on;
 
 for Nt_test = antennaCounts
-    % Temporarily override antenna count via a local config struct
-    cfgOverride.Nt = Nt_test; cfgOverride.Nr = Nt_test;
-
-    ber = zeros(size(SNRdB_range));
+    ber_runs = zeros(nRuns, numel(SNRdB_range));
     qh = qamHelpers(); Es = qh.symEnergy(M);
-    for si = 1:numel(SNRdB_range)
-        snrLin = 10^(SNRdB_range(si)/10);
-        sigma2 = Es/snrLin;
-        nErr = 0; nBits = 0;
-        for b = 1:nBlocks
-            symIdx = randi([0 M-1], Nt_test, 1);
-            x = qh.mod(symIdx, M);
-            H = genChannel(Nt_test, Nt_test);
-            n = sqrt(sigma2/2)*(randn(Nt_test,1)+1i*randn(Nt_test,1));
-            y = H*x + n;
-            [~, LLR] = softOutputLAS(y, H, sigma2, M, 'mmse', 50);
-            trueBits = symbolsToBits(x, M);
-            hardBits = double(LLR < 0);
-            nErr = nErr + sum(sum(hardBits ~= trueBits));
-            nBits = nBits + numel(trueBits);
+
+    for r = 1:nRuns
+        for si = 1:numel(SNRdB_range)
+            snrLin = 10^(SNRdB_range(si)/10);
+            sigma2 = Es/snrLin;
+            nErr = 0; nBits = 0;
+            for b = 1:nBlocks
+                symIdx = randi([0 M-1], Nt_test, 1);
+                x = qh.mod(symIdx, M);
+                H = genChannel(Nt_test, Nt_test);
+                n = sqrt(sigma2/2)*(randn(Nt_test,1)+1i*randn(Nt_test,1));
+                y = H*x + n;
+                [~, LLR] = softOutputLAS(y, H, sigma2, M, 'mmse', 50);
+                trueBits = symbolsToBits(x, M);
+                hardBits = double(LLR < 0);
+                nErr = nErr + sum(sum(hardBits ~= trueBits));
+                nBits = nBits + numel(trueBits);
+            end
+            ber_runs(r, si) = nErr/nBits;
         end
-        ber(si) = nErr/nBits;
+        fprintf('Nt=Nr=%d, run %d/%d done.\n', Nt_test, r, nRuns);
     end
+
+    ber = mean(ber_runs, 1);   % average across independent runs
     semilogy(SNRdB_range, ber, '-o', 'DisplayName', sprintf('Nt=Nr=%d', Nt_test));
-    fprintf('Nt=Nr=%d sweep done.\n', Nt_test);
 end
 
 xlabel('SNR [dB]'); ylabel('Bit Error Rate'); legend show;

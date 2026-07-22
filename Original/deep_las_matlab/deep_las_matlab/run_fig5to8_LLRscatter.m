@@ -39,8 +39,8 @@ for c = 1:numel(cfgList)
 
         [~, LLR_true] = softOutputLAS(y, H, sigma2, M, 'mmse', cfg.maxLASIter);
 
-        xhat_mmse = initEstimate(y, H, sigma2, M, 'mmse');
-        xn = [real(xhat_mmse); imag(xhat_mmse)];
+        xhat_mmse_soft = initEstimateSoft(y, H, sigma2, M, 'mmse');  % FIX: soft
+        xn = [real(xhat_mmse_soft); imag(xhat_mmse_soft)];
         xn = xn ./ max(abs(xn));
         llrMlpVec = mlpNet(xn);
         LLR_mlp = reshape(llrMlpVec, B, Nt).';
@@ -50,7 +50,11 @@ for c = 1:numel(cfgList)
         LLR_true_all(t,:) = reshape(LLR_true.', 1, []);
         LLR_mlp_all(t,:)  = reshape(LLR_mlp.',  1, []);
         LLR_deep_all(t,:) = reshape(LLR_deep.', 1, []);
-        ReSym_all(t,:) = real(x).';
+        % FIX: plot the noisy/equalized value (continuous), matching
+        % the paper's x-axis, NOT the ideal transmitted symbol (which
+        % for e.g. 4-QAM only ever takes the discrete values +-1 and
+        % would collapse the scatter to two vertical lines).
+        ReSym_all(t,:) = real(xhat_mmse_soft).';
     end
 
     figure('Name', sprintf('LLR scatter, M=%d, SNR=%ddB', M, snrdB));

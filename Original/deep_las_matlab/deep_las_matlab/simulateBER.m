@@ -62,8 +62,8 @@ for si = 1:numel(SNRdB_range)
                 hardBits = double(LLR < 0);
 
             case 'mlp-only'
-                xhat_mmse = initEstimate(y, H, sigma2, M, 'mmse');
-                xn = [real(xhat_mmse); imag(xhat_mmse)];
+                xhat_mmse_soft = initEstimateSoft(y, H, sigma2, M, 'mmse');  % FIX: soft
+                xn = [real(xhat_mmse_soft); imag(xhat_mmse_soft)];
                 xn = xn ./ max(abs(xn));
                 llrVec = mlpNet(xn);
                 LLR = reshape(llrVec, log2(M), Nt).';

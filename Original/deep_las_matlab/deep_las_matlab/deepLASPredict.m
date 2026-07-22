@@ -13,8 +13,8 @@ function LLR = deepLASPredict(y, H, sigma2, M, mlpNet, gruNet)
 Nt = size(H, 2);
 B  = log2(M);
 
-xhat_mmse = initEstimate(y, H, sigma2, M, 'mmse');
-xm = [real(xhat_mmse); imag(xhat_mmse)];
+xhat_mmse_soft = initEstimateSoft(y, H, sigma2, M, 'mmse');  % FIX: soft, not hard-decided
+xm = [real(xhat_mmse_soft); imag(xhat_mmse_soft)];
 xn = xm ./ max(abs(xm));
 
 llrRough = mlpNet(xn);
