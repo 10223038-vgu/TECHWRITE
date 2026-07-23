@@ -7,8 +7,12 @@
 
 clear; clc;
 cfg = getConfig();
-SNRdB_range = 0:2:14;
-nBlocks = 2000;    % raise further for smoother, lower-BER curves
+SNRdB_range = 0:1:14;   % finer than before (was 0:2:14)
+nBlocksMin = 300;       % starting batch size; simulateBER's adaptive
+                        % stopping will run more automatically at high
+                        % SNR until enough actual errors are observed
+                        % (this is the main fix for the shallow/noisy
+                        % tail -- see simulateBER.m's header comment)
 
 figure; hold on; set(gca,'YScale','log'); grid on;
 colors = lines(8);
@@ -29,11 +33,11 @@ for M = cfg.M_list
     % no ML) -- if MLP-only / Deep LAS ever sit ABOVE this line, that's
     % a red flag the network has learned nothing useful, since even a
     % trivial linear detector should beat "no detector."
-    ber_mmse    = simulateBER('mmse-hard',    M, SNRdB_range, nBlocks);
-    ber_convLAS = simulateBER('convlas-hard', M, SNRdB_range, nBlocks);
-    ber_mlpOnly = simulateBER('mlp-only',     M, SNRdB_range, nBlocks, mlpNet);
-    ber_softLAS = simulateBER('softlas',      M, SNRdB_range, nBlocks);
-    ber_deepLAS = simulateBER('deeplas',      M, SNRdB_range, nBlocks, mlpNet, gruNet);
+    ber_mmse    = simulateBER('mmse-hard',    M, SNRdB_range, nBlocksMin);
+    ber_convLAS = simulateBER('convlas-hard', M, SNRdB_range, nBlocksMin);
+    ber_mlpOnly = simulateBER('mlp-only',     M, SNRdB_range, nBlocksMin, mlpNet);
+    ber_softLAS = simulateBER('softlas',      M, SNRdB_range, nBlocksMin);
+    ber_deepLAS = simulateBER('deeplas',      M, SNRdB_range, nBlocksMin, mlpNet, gruNet);
 
     tag = sprintf('%dQAM', M);
     semilogy(SNRdB_range, ber_mmse,    ':x', 'DisplayName', ['MMSE hard (sanity) ' tag]);

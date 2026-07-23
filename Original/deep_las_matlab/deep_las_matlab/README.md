@@ -13,6 +13,33 @@ before trusting larger sweeps.
 
 ## Changelog (bug fixes since first delivery)
 
+- **CUDA crash fix**: `trainGRU.m` / `trainSeqModel.m` now force
+  `'ExecutionEnvironment','cpu'` in `trainingOptions`, since the
+  `CUDA_ERROR_UNKNOWN` crash is a local GPU driver/toolbox mismatch,
+  not a code bug. Switch back to `'auto'` once your GPU setup is
+  confirmed working.
+- **Fig. 9 shallow/noisy high-SNR tail fixed**: `simulateBER.m` was
+  using a fixed block count, which sees very few actual bit errors at
+  high SNR (e.g. 0-2 errors out of a few thousand bits at 12-14 dB) —
+  that's almost certainly why the BER drop-off looked worse than the
+  paper's. `simulateBER.m` now runs adaptively: it keeps simulating
+  until a target minimum number of *actual errors* has been observed
+  at every SNR point (default 150), capped by a max block count, which
+  is standard practice for reliable BER curves. SNR resolution was
+  also finened (1 dB steps).
+- **Added Fig. 10** (was never implemented before): `run_fig10_modelBasedComparison.m`,
+  plus two new supporting files: `bruteForceSD.m` (exact optimal
+  soft-output detector via brute-force search — see below for why this
+  is equivalent to sphere decoding here) and `trainDetNet.m` /
+  `detNetPredict.m` (DetNet baseline — **this is the most experimental
+  part of the whole package**, see the dedicated caveat below).
+- **Fig. 11(a) (FFT length) actually implemented**: previously this
+  was just a note saying it was out of scope. `trainGRU.m` now accepts
+  an optional `seqLen` argument that pools consecutive samples into
+  multi-timestep GRU training sequences, and `run_fig11_sweeps.m` maps
+  FFT length to `seqLen` as a documented proxy. Fig. 11(b) (antenna
+  count) also got the same adaptive-stopping/finer-SNR treatment as
+  Fig. 9.
 - **`trainMLP.m`**: `trainParam.max_fail` must be finite in MATLAB
   (was `Inf`, now `max(epochs,1000)`).
 - **`trainGRU.m` / `deepLASPredict.m`**: `trainNetwork`/`predict` require
@@ -47,8 +74,6 @@ before trusting larger sweeps.
   baseline curve (a detector-free/ML-free lower bound — if a learned
   detector ever sits above this line, something is broken), and raised
   the default block/sample counts.
-- **`run_fig11_sweeps.m`**: finer SNR step (1 dB instead of 2 dB) and
-  multi-run averaging to smooth the curve.
 - **Added `run_fig12_dataDrivenComparison.m` and `trainSeqModel.m`**:
   Fig. 12 (Deep LAS vs. LSTM/Bi-LSTM/GRU/MLP-only baselines) was
   described in the original guide but the driver script was never
@@ -77,23 +102,28 @@ before trusting larger sweeps.
 | `pamBitTable.m` | Gray-coded PAM level/bit lookup | (bit mapping for Eq. 4) |
 | `modLASCounter.m` | Counter-hypothesis search for one bit (Algorithm 2) | Algorithm 2 |
 | `softOutputLAS.m` | Full two-step model-based soft-output LAS + LLR | Section III, Eq. 4b |
+| `bruteForceSD.m` | Exact optimal soft-output detector (exhaustive search) | Eq. 3-4, "SD" baseline for Fig. 10 |
+| `trainDetNet.m` | DetNet training (custom dlarray loop) **-- experimental** | refs [35]/[39], Fig. 10 |
+| `detNetPredict.m` | DetNet inference (hard bits) | refs [35]/[39], Fig. 10 |
 | `symbolsToBits.m` | Ground-truth bit matrix from symbols | (bit layout helper) |
 | `generateTrainingData.m` | Build Deep LAS training/validation datasets | Eq. 19 |
 | `trainMLP.m` | Train MLP block (rough LLR estimator) | Section IV-A, Eqs. 20-21, Alg. 3 |
-| `trainGRU.m` | Train GRU block (refines MLP estimate, Deep LAS hyperparams) | Section IV-A, Eqs. 22-23, Fig. 2 |
+| `trainGRU.m` | Train GRU block (refines MLP estimate, Deep LAS hyperparams; supports `seqLen` pooling for Fig. 11a) | Section IV-A, Eqs. 22-23, Fig. 2 |
 | `trainSeqModel.m` | Generalized GRU/LSTM/Bi-LSTM trainer (Fig. 12 baselines) | Section V-C |
 | `deepLASPredict.m` | Online Deep LAS inference (works with any trained seq net) | Eq. 23 |
-| `simulateBER.m` | Configurable Monte-Carlo BER loop | Figs. 9-12 |
+| `simulateBER.m` | Configurable **adaptive** Monte-Carlo BER loop | Figs. 9-12 |
 | `run_quick_demo.m` | Fast smoke test of the whole pipeline | - |
 | `run_fig4_trainingLoss.m` | MLP/GRU layer-count training-loss sweep | Fig. 4 |
 | `run_fig5to8_LLRscatter.m` | Actual vs approximated LLR scatter plots | Figs. 5-8 |
 | `run_fig9_BERcomparison.m` | Conv. LAS vs Soft-LAS vs Deep LAS vs MLP-only vs MMSE | Fig. 9 |
-| `run_fig11_sweeps.m` | BER vs antenna count (and FFT-length notes) | Fig. 11 |
+| `run_fig10_modelBasedComparison.m` | + DetNet + optimal SD, ZF and MMSE init | Fig. 10 |
+| `run_fig11_sweeps.m` | BER vs FFT length (a) and antenna count (b) | Fig. 11 |
 | `run_fig12_dataDrivenComparison.m` | Deep LAS vs LSTM/Bi-LSTM/GRU/MLP-only, 4-QAM & 16-QAM | Fig. 12 |
 
-Not included (left as extensions, see below): DetNet and optimal soft-output
-sphere decoding baselines for **Fig. 10**, and full turbo-coded BER for
-**Figs. 9-12** absolute numbers (see caveats below).
+Not included (left as extensions): full turbo-coded BER for
+**Figs. 9-12** absolute numbers (see caveats below) -- Fig. 10's
+DetNet and SD baselines ARE now included, see the DetNet caveat below
+for how confident to be in that specific piece.
 
 ## Quick Start
 
@@ -171,12 +201,33 @@ directly for custom experiments.
    (the base `comm.TurboEncoder` trellis above is rate 1/3 before
    puncturing) — the paper doesn't specify its puncturing pattern.
 
-6. **DetNet / optimal soft-output SD (Fig. 10 baselines).** Not
-   implemented here — DetNet is an unfolded projected-gradient network
-   (see Samuel et al., refs [35],[39]) and the soft-output SD is a
-   depth-first sphere search tracking both the ML and counter-hypothesis
-   costs (see ref [9]). Both are self-contained additions you can drop
-   into `simulateBER.m` as new `detectorType` cases once implemented.
+6. **DetNet (Fig. 10) is the most experimental file in this package.**
+   Unlike everything else here, it can't use MATLAB's standard
+   `trainNetwork`/Layer-array API (DetNet has per-layer trainable step
+   sizes and a nonstandard skip-connection structure), so
+   `trainDetNet.m` implements a manual `dlarray` + custom-Adam training
+   loop instead. I could not verify that `dlgradient` correctly
+   differentiates through the nested cell-array-of-structs parameter
+   container used here (`params.W1{k}`, etc.) — if `trainDetNet.m`
+   errors on `dlgradient(loss, params)`, the most likely fix is
+   flattening `params` into named top-level fields (`params.W1_1`,
+   `params.W1_2`, ... instead of `params.W1{1}`, `params.W1{2}`, ...)
+   so there's an unambiguous flat container to differentiate through.
+   Everything downstream of a successfully-trained DetNet
+   (`detNetPredict.m`, its use in `simulateBER.m`) is plain numeric
+   code and should be reliable once training succeeds. If it's not
+   worth debugging, set `includeDetNet = false` at the top of
+   `run_fig10_modelBasedComparison.m` and get the rest of the figure
+   without it.
+
+7. **The "SD (optimal)" baseline is exact brute force, not a real
+   sphere-decoding tree search.** For Nt=4, `M^Nt` is at most
+   `16^4 = 65536`, small enough to evaluate every candidate directly
+   (`bruteForceSD.m`) and get the exact same answer a correctly-tuned
+   sphere decoder would give — computing the actual ML/MAP minimum
+   IS the definition of what SD approximates efficiently. This will
+   not scale past a handful of antennas at 16-QAM; a real bounded-
+   radius tree search would be needed for larger configurations.
 
 7. **Antenna sweep scale (Fig. 11b).** The paper sweeps up to
    Nt=Nr=256; `run_fig11_sweeps.m` defaults to smaller sizes since the
@@ -199,3 +250,18 @@ directly for custom experiments.
   (`sign(LLR) == +1` when the true bit is 0).
 - `simulateBER('mmse-hard', ...)` should be the *worst* curve; `deeplas`
   and `softlas` should sit below `convlas-hard`, consistent with Fig. 9.
+- `simulateBER('sd-optimal', ...)` should be at or near the *best*
+  curve in any comparison (it's the exact ML/MAP solution) — if
+  anything sits clearly below it, something in that other detector's
+  BER accounting is wrong (e.g. a bit-layout mismatch), since nothing
+  can legitimately beat the optimal detector on the same channel model.
+- DetNet's curve has no guaranteed ordering relative to the others —
+  unlike the analytic detectors, its quality depends entirely on
+  whether `trainDetNet.m`'s custom training loop actually converged.
+  If it's flat/near-random across all SNR, that's a training-failure
+  signal (see caveat #6), not necessarily a fundamental limitation.
+- `simulateBER.m` now prints the error/bit/block counts for every SNR
+  point — if you see very few errors (say, under ~30) at your highest
+  SNR points despite adaptive stopping, `maxBlocksFactor` was hit
+  before `minErrors`; raise it (at the cost of runtime) for a more
+  reliable low-BER tail.

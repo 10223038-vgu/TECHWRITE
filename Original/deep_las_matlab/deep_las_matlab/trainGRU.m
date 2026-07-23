@@ -1,4 +1,4 @@
-function [gruNet, trainInfo] = trainGRU(datasetFile, mlpNet, numGRULayers, numHiddenUnits, maxEpochs)
+function [gruNet, trainInfo] = trainGRU(datasetFile, mlpNet, numGRULayers, numHiddenUnits, maxEpochs, seqLen)
 % TRAINGRU Train the GRU block of the proposed Deep LAS
 % (Section IV-A, Fig. 2, Eqs. 22-23).
 %
@@ -12,12 +12,26 @@ function [gruNet, trainInfo] = trainGRU(datasetFile, mlpNet, numGRULayers, numHi
 %   numGRULayers   - sweep 1,2,3 for Fig. 4b (paper uses 2 sub-blocks)
 %   numHiddenUnits - V in the paper (V = 100)
 %   maxEpochs      - paper: 40
+%   seqLen         - NEW: number of consecutive dataset samples pooled
+%                    into one multi-timestep training sequence (default
+%                    1 = original single-timestep behavior). This is
+%                    what lets Fig. 11(a)'s "longer FFT length -> more
+%                    pooled input per training sequence -> better LLR
+%                    approximation" story actually be reproduced: pass
+%                    a larger seqLen to simulate a longer FFT length's
+%                    effect on GRU training (see run_fig11_sweeps.m).
+%                    The target for each pooled sequence is the LLR of
+%                    the LAST sample in the group (standard
+%                    sequence-to-one convention). This grouping is a
+%                    documented interpretive proxy, not a literal
+%                    per-OFDM-subcarrier sequence -- see README.md.
 %
 % Requires Deep Learning Toolbox (trainNetwork, gruLayer).
 
 if nargin < 3 || isempty(numGRULayers),   numGRULayers = 2;   end
 if nargin < 4 || isempty(numHiddenUnits), numHiddenUnits = 100; end
 if nargin < 5 || isempty(maxEpochs),      maxEpochs = 40;      end
+if nargin < 6 || isempty(seqLen),         seqLen = 1;          end
 
 data = load(datasetFile);
 X = data.Xm_all;                    % (2Nt) x N
@@ -32,25 +46,32 @@ N = size(X, 2);
 llrRough = mlpNet(Xn);              % (Nt*log2M) x N
 llrRoughSummary = mean(llrRough, 1); % 1 x N   (single-neuron MLP output, Eq. 21)
 
-% Build U_G = [y'; LLR_MLP] per sample -> each sample is a
-% (2Nt+1) x 1 feature vector; treat each sample as a sequence with
-% one timestep of dimension (2Nt+1) for MATLAB's sequence layers
-% (adjust here if you want multi-timestep OFDM-block sequences).
 UG = [Xn; llrRoughSummary];         % (2Nt+1) x N
 
-XTrainSeq = cell(N,1);
-for i = 1:N
-    XTrainSeq{i} = UG(:, i);        % (2Nt+1) x 1  (one timestep)
+if seqLen <= 1
+    % Original single-timestep behavior
+    XTrainSeq = cell(N,1);
+    for i = 1:N
+        XTrainSeq{i} = UG(:, i);
+    end
+    YTrainAll = Y.';
+else
+    % Pool seqLen consecutive samples into one multi-timestep sequence;
+    % target = LLR of the LAST sample in each pooled group.
+    nSeq = floor(N / seqLen);
+    XTrainSeq = cell(nSeq, 1);
+    YTrainAll = zeros(nSeq, size(Y,1));
+    for i = 1:nSeq
+        rng_i = (i-1)*seqLen + 1 : i*seqLen;
+        XTrainSeq{i} = UG(:, rng_i);          % (2Nt+1) x seqLen
+        YTrainAll(i, :) = Y(:, rng_i(end)).'; % target = last timestep's LLR
+    end
 end
-YTrainAll = Y.';                    % N x (Nt*log2M) numeric matrix
-                                     % (trainNetwork requires a plain
-                                     % matrix, NOT a cell array, for
-                                     % sequence-to-one regression with
-                                     % 'OutputMode','last')
+Ntrain = numel(XTrainSeq);
 
-nVal = round(0.2*N);
-valIdx = randperm(N, nVal);
-trainIdx = setdiff(1:N, valIdx);
+nVal = round(0.2*Ntrain);
+valIdx = randperm(Ntrain, nVal);
+trainIdx = setdiff(1:Ntrain, valIdx);
 
 layers = sequenceInputLayer(size(UG,1));
 for L = 1:numGRULayers
@@ -67,10 +88,15 @@ options = trainingOptions('adam', ...
     'Shuffle', 'every-epoch', ...
     'ValidationData', {XTrainSeq(valIdx), YTrainAll(valIdx, :)}, ...
     'ValidationFrequency', 30, ...
+    'ExecutionEnvironment', 'cpu', ...
     'Verbose', true, ...
     'Plots', 'none');
+% NOTE: ExecutionEnvironment is forced to 'cpu' to avoid CUDA_ERROR_UNKNOWN
+% crashes; switch to 'auto' once your GPU driver/toolbox versions are
+% confirmed compatible.
 
 [gruNet, trainInfo] = trainNetwork(XTrainSeq(trainIdx), YTrainAll(trainIdx, :), layers, options);
 
-fprintf('GRU training done: %d layers x %d units.\n', numGRULayers, numHiddenUnits);
+fprintf('GRU training done: %d layers x %d units, seqLen=%d.\n', ...
+    numGRULayers, numHiddenUnits, seqLen);
 end
