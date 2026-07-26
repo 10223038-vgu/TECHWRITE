@@ -1,165 +1,123 @@
-# Deep-LAS Simulation Project
+# Direction 1: From Structured GRU to Pooled-Context Deep LAS
 
-This repository contains the implementation and experimentation pipeline for
-reproducing and extending the results of the Deep LAS (Likelihood Ascent
-Search) detector in MIMO systems, based on:
+**Status summary (read this first):** the original "structured GRU"
+hypothesis -- that a recurrent net should exploit the *order* of
+correlated neighboring subcarriers -- was tested and **falsified** by
+its own ablation (Part A below). The correlation-*content* half of the
+hypothesis held up, though, so the mechanism was swapped from a GRU to a
+permutation-invariant pooling network, which beat the GRU outright. That
+pooling network currently lands at roughly **parity** with our
+reproduced Original Deep LAS -- a real but modest result, not yet a
+clear win. See `THEORY_POOLING.md` for the full theory/reasoning and the
+proposed next step (distance-aware pooling).
 
-> Ullah, A., Choi, W., Berhane, T. M., Sambo, Y., and Imran, M. A. (2024).
-> *Soft-Output Deep LAS Detection for Coded MIMO Systems: A Learning-Aided
-> LLR Approximation.* IEEE Transactions on Vehicular Technology.
+See `THEORY.md` for the original derivation (Sections 1.1-1.6 are still
+the foundation) and `THEORY_POOLING.md` for the pooling-net theory that
+supersedes Section 1.7's original GRU-order hypothesis.
 
-## 📌 Project Overview
+## The story, in order
 
-The project is divided into two main phases:
+1. **`run_direction1_ablation.m`** trains three GRU arms (correlated
+   order / shuffled order, same content / i.i.d., no correlation) to
+   test whether order matters. Result: correlated vs. shuffled BER gap
+   flips sign across the SNR sweep (noise, not a real effect); both
+   clearly beat i.i.d. (real, consistent effect). **Order doesn't
+   matter; correlated content does.**
+2. **`run_direction1_vs_original.m`** compares the correlated GRU against
+   our reproduced Original Deep LAS + classical baselines. The GRU
+   underperforms the original at every SNR and visibly floors out at
+   high SNR -- consistent with (1): a recurrent architecture is a hard,
+   sample-inefficient way to learn a function the data says is actually
+   order-invariant.
+3. **`run_pooling_vs_gru.m`** replaces the GRU with a permutation-
+   invariant pooling network (mean/max/std over the same context window,
+   see `THEORY_POOLING.md` Section 3) and compares the two directly on
+   identical data. The pooling net beats the GRU at every SNR point, by
+   a **widening** margin at high SNR where the GRU floors out.
+4. **`run_pooling_vs_original.m`** is the test that actually matters: does
+   the pooling net beat the Original Deep LAS it's supposed to improve
+   on, not just the GRU? Current result: **rough parity** -- the two
+   curves track closely across the full sweep. Real and honest, but
+   short of a clear win. `THEORY_POOLING.md` Section 5-6 lays out why
+   (naive pooling is distance-blind -- it weights a barely-correlated
+   far neighbor the same as a strongly-correlated near one) and proposes
+   distance-aware pooling as the next, theoretically well-motivated step.
 
-1. **Reproduction Phase (Original Work)** -- ✅ complete
-   - Recreate the simulation results from the reference paper
-   - Validate correctness of implementation
-   - Identify and fix bugs/ambiguities found during reproduction
-   - Ensure consistency with reported performance where the paper's own
-     description is precise enough to check against
+## Files
 
-2. **Extension Phase (Our Work)** -- 🚧 in progress
-   - Apply fixes and improvements identified during reproduction (done, see
-     `original/deep-las-matlab/README.md` changelog)
-   - Introduce new ideas for novelty (two directions selected, approved by
-     course lecturer)
-   - Develop our own enhanced simulation and results for a new paper
+| File | Purpose |
+|---|---|
+| `THEORY.md` | Original derivation (multipath model, Lseq design rule, Sections 1.1-1.6 still current) |
+| `THEORY_POOLING.md` | **Read this** -- the ablation result, why the GRU was replaced, the pooling theory, and the proposed next step |
+| `genMultipathChannel.m` | Correlated per-subcarrier channel generator |
+| `coherenceBandwidth.m` | `Bc = N/L` -- sets the sequence-length design rule |
+| `buildCorrelatedAndShuffledSequences.m` | Paired GRU dataset builder for the core ablation (identical content, different order; also used for the correlated GRU arm generally) |
+| `buildIIDSequences.m` | i.i.d. baseline arm (no correlation, matches the original codebase) |
+| `trainGRUFromSequences.m` | Shared GRU trainer for all GRU-based arms |
+| `buildPooledContextFeatures.m` | Builds the fixed-size, permutation-invariant pooled feature set (supersedes the GRU sequence builder for the "ours" arm) |
+| `trainPoolingNet.m` | Trains the plain feedforward network on pooled features |
+| `simulateBERDirection1.m` | BER evaluator matching the GRU's sequence-shaped training input (`mode`: correlated / shuffled / iid) |
+| `simulateBERPooling.m` | BER evaluator matching the pooling net's fixed-size input |
+| `paperReferenceNumbers.m` | Digitized headline numbers from the original paper's text |
+| `snrAtTargetBER.m` | Interpolates SNR needed to hit a target BER (the paper's own metric) |
+| `run_direction1_ablation.m` | Runs the H1/H2/H3 GRU ablation -- step 1 above |
+| `run_direction1_vs_original.m` | GRU vs. Original vs. baselines -- step 2 above |
+| `run_pooling_vs_gru.m` | Pooling net vs. GRU, head-to-head -- step 3 above |
+| `run_pooling_vs_original.m` | **The comparison that matters** -- pooling net vs. Original vs. baselines, step 4 above |
 
-## 📂 Repository Structure
+## Setup
+All driver scripts need the original codebase on the MATLAB path. Each
+has an `originalCodePath` / `origDir` variable near the top -- **edit
+that line** to point at wherever your `original/deep-las-matlab` (or
+equivalent) folder actually lives on your machine. They'll error with a
+clear message (instead of failing silently) if the path is wrong.
 
+## Run order
+```matlab
+run_direction1_ablation.m        % H1/H2/H3 GRU ablation; caches the correlated GRU net
+run_direction1_vs_original.m     % GRU vs Original vs baselines (uses cached GRU if present)
+run_pooling_vs_gru.m             % Pooling net vs GRU head-to-head; caches the pooling net
+run_pooling_vs_original.m        % Pooling net vs Original vs baselines (the result that matters)
 ```
-.
-├── README.md                      <- this file
-├── THEORY.md                      <- mathematical backbone for our proposed extensions
-├── original/
-│   ├── result/                    <- MATLAB outputs (figures, .mat files) from reproduction
-│   └── deep-las-matlab/           <- reproduction codebase (see its own README.md for
-│                                      the full file map and a detailed changelog of every
-│                                      bug found and fixed during reproduction)
-└── improved/                      <- extension-phase codebase (Directions 1 & 2, see below)
-    ├── direction1_structured_gru/
-    ├── direction2_unfolded_las/
-    └── result/
-    └── Theory backecone.md
 
-```
+## What we compare, and why
 
-### `original/`
-Everything required to reproduce the original paper's results.
+**1. BER vs SNR curves** (primary plot) -- MMSE (hard, sanity floor),
+Conv. LAS (hard), our reproduced Original Deep LAS, and our "ours" arm
+(GRU or pooling net depending on script), all on one semilog plot. Same
+metric/plot style as the paper's own Fig. 9.
 
-**`original/deep-las-matlab/`**
-MATLAB implementation of:
-- MIMO-OFDM system model, Rayleigh channel, QAM modulation (Section II of the paper)
-- Two-step model-based soft-output LAS detector (Algorithms 1-2)
-- Deep LAS (MLP+GRU) data-driven detector (Section IV)
-- Baselines: MMSE, conventional hard-output LAS, MLP-only, LSTM/Bi-LSTM/GRU,
-  DetNet (experimental), brute-force optimal SD
-- Driver scripts reproducing Figs. 4-12 of the paper
+**2. SNR required to reach BER=1e-4 and BER=1e-5** -- computed via
+`snrAtTargetBER.m` from our own measured curves. We use these specific BER
+targets because they are exactly what the paper reports its headline
+numbers against ("2.55 dB / 3 dB gain ... maintaining BER of 1e-4"; "0.4
+dB / 1.2 dB gap to SD ... to achieve BER of 1e-5").
 
-This folder's own `README.md` is the authoritative reference for exact file
-purposes and contains a full changelog of every bug we found and fixed while
-reproducing the paper (hard-vs-soft equalizer output, MATLAB API quirks,
-adaptive Monte-Carlo stopping, etc.) -- read that before touching the code.
+**3. SNR gain relative to Conv. LAS at each target** -- this is the paper's
+own metric, computed several ways so they're all in one table:
+   - **Paper's reported gain** (Original Deep LAS vs Conv. LAS, from the text)
+   - **Our reproduction's gain** (should land close to the paper's number --
+     this is a sanity check on the reproduction itself)
+   - **Our "ours" arm's gain** vs Conv. LAS
+   - **"Ours" vs our own Original reproduction** -- the cleanest
+     apples-to-apples comparison, since both numbers come from the exact
+     same codebase/hardware/random seeds and differ only in the
+     detector's architecture, isolating our contribution from any
+     reproduction-fidelity noise relative to the paper.
 
-**`original/result/`**
-Output figures and data generated by running the scripts above, kept
-separate from code so reproduction runs don't clutter the codebase.
+We deliberately do NOT try to overlay the paper's raw BER curve point-by-
+point, because we don't have their digitized data -- only the summary
+numbers they printed in text. Comparing against those reported numbers,
+side by side with our own reproduction and improvement, is the honest way
+to show "does our baseline match what they claimed, and does our
+improvement move further in the same direction" without overstating what
+we can verify.
 
-### `improved/`
-New code for our own contributions (not yet built -- see Workflow below).
-Kept fully separate from `original/` so the reproduction baseline stays
-untouched and citable as a control.
+## Next step
 
-## ⚙️ Workflow
+See `THEORY_POOLING.md` Section 6: distance-aware pooling (weight or
+partition the context by $|\delta|$ from the target subcarrier, instead
+of pooling the whole Lseq-1 window uniformly). This is the most
+theoretically well-motivated lever left before concluding correlation
+exploitation has hit a real ceiling against the original architecture.
 
-### Step 1: Environment setup
-- MATLAB R2023a (or similar)
-- Communications Toolbox, Deep Learning Toolbox, Statistics and Machine
-  Learning Toolbox (see `original/deep-las-matlab/README.md` for the full
-  requirements list)
-
-### Step 2: Reproduce original results -- ✅ done
-- Ran all scripts in `original/deep-las-matlab/`
-- Outputs saved to `original/result/`
-- Compared against the reference paper's Figs. 4-12
-
-### Step 3: Identify issues -- ✅ done
-Documented in `original/deep-las-matlab/README.md`'s changelog. Key findings:
-- Hard-decided (quantized) equalizer output was being fed to the DNN as a
-  training feature and plotted as "Rx symbol," destroying the noise
-  information needed for soft-output estimation and causing the Fig. 5-8
-  imbalance and Fig. 9 near-random MLP/Deep-LAS behavior
-- Fixed-block-count Monte Carlo gave unreliable BER estimates at high SNR
-  (too few actual errors observed), flattening/distorting curve tails
-- Several MATLAB API quirks (finite `max_fail`, matrix-vs-cell response
-  format for sequence-to-one regression, GPU driver crashes)
-- Fig. 11(a) (FFT length) and Fig. 12 (data-driven baselines) were
-  originally undocumented gaps, since implemented
-
-### Step 4: Apply improvements -- ✅ done
-All fixes above applied directly in `original/deep-las-matlab/`; see that
-folder's changelog for the full list and reasoning for each fix.
-
-### Step 5: Decide novel contributions -- ✅ approved by lecturer
-Two directions, to be combined into one paper:
-
-1. **Structured GRU sequence input** -- replace the original paper's
-   ambiguous/arbitrary sequence pooling with sequences built over subcarriers
-   within one channel *coherence bandwidth*, so the GRU has real correlation
-   structure to exploit (see `THEORY.md`, Part 1)
-2. **Deep-unfolded LAS** -- replace the label-distillation "Deep LAS" (an
-   MLP+GRU trained to imitate classical LAS's output) with a genuinely
-   unfolded network: LAS's iterations become network layers with learnable
-   step sizes, trained end-to-end against true bits (see `THEORY.md`, Part 2,
-   to be derived next)
-
-### Step 6: Build extension codebase -- 🚧 next
-- `improved/direction1_structured_gru/`: multipath channel generator with
-  configurable power delay profile, coherence-bandwidth-matched sequence
-  builder, retrained GRU, shuffled-control ablation (see `THEORY.md` for the
-  exact experiment this needs to run)
-- `improved/direction2_unfolded_las/`: unfolded-LAS network architecture and
-  end-to-end training loop
-- Combined system: Direction 1's input feeding Direction 2's architecture
-
-### Step 7: Run ablation experiments -- 🚧 planned
-Per `THEORY.md`'s hypotheses:
-- Correctly-ordered vs. shuffled-control vs. original i.i.d.-pooled sequences
-  (isolates whether the GRU is exploiting real correlation, not just a longer
-  receptive field)
-- Sequence length swept relative to coherence bandwidth
-- Three-way comparison: original Deep LAS vs. Direction-1-only vs.
-  Direction-2-only vs. combined system
-
-### Step 8: Write paper and choose venue -- 🚧 planned
-- Related work needs to position against both the original paper and the
-  deep-unfolding literature (DetNet-family, joint deep-unfolded
-  detection/decoding work)
-- Venue: leaning toward a rolling-submission letter journal (e.g. IEEE
-  Wireless Communications Letters / IEEE Communications Letters) given most
-  near-term 2026 conference deadlines have already passed; revisit ICC/WCNC/
-  VTC 2027 deadlines once posted
-
-## 🎯 Goals
-
-- ✅ Accurately reproduce published results
-- ✅ Debug and improve weak components
-- 🚧 Develop a novel contribution for future publication
-
-## 📝 Notes
-
-- MATLAB is required to run simulations
-- Use fixed random seeds (`rng(seed)`) when comparing variants so differences
-  are attributable to the change being tested, not random initialization
-- See `original/deep-las-matlab/README.md` for detailed sanity checks to run
-  before trusting any given figure's output
-
-## 📌 Future Work
-
-- Extend ablations to higher-order modulation (64-QAM) and larger antenna
-  counts once the core Direction 1 + 2 result is validated
-- Compare against additional AI-based detectors as they appear in the
-  literature
-- Explore realistic 3GPP channel models (CDL/TDL) as a further extension,
-  per the original paper's own stated future work
