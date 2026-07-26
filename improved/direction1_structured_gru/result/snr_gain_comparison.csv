@@ -1,5 +1,5 @@
 Quantity,SNRgainDB
 Paper: DeepLAS vs ConvLAS,2.55
-Ours: OrigDeepLAS vs ConvLAS,3.5238550593902
-Ours: Direction1 vs ConvLAS,12916.9758527276
-Ours: Direction1 vs OrigDeepLAS,12913.4519976682
+Ours: OrigDeepLAS vs ConvLAS,-28.9706761747868
+Ours: Direction1 vs ConvLAS,173.145463596685
+Ours: Direction1 vs OrigDeepLAS,202.116139771471

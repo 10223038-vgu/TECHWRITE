@@ -93,10 +93,10 @@ if isfile(cachedNet)
 else
     fprintf('\nNo cached Direction 1 net found -- run run_direction1_ablation.m first,\n');
     fprintf('or training a fresh one now with default settings.\n');
-    N = 256; L = 4; tau = tau_default; nRealizations = 40; maxEpochs = 40;
+    N = 256; L = 4; tau = tau_default; nRealizations = 200; maxEpochs = 60;
     Bc = coherenceBandwidth(N, L);
     Lseq = round(Bc);
-    [seqCorr, ~] = buildCorrelatedAndShuffledSequences(M, 8, Lseq, N, L, tau, nRealizations, mlpNet_orig);
+    [seqCorr, ~] = buildCorrelatedAndShuffledSequences(M, SNRdB_range, Lseq, N, L, tau, nRealizations, mlpNet_orig);
     gruNet_d1 = trainGRUFromSequences(seqCorr, 2, 100, maxEpochs);
     mlpNet_d1 = mlpNet_orig;
 end

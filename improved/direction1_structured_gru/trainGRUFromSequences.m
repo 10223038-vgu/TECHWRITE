@@ -26,8 +26,26 @@ outputSize = size(YTrainAll, 2);
 
 layers = sequenceInputLayer(inputSize);
 for Lyr = 1:numGRULayers
+    % BUG THIS FIXES: every earlier version of this stack set
+    % OutputMode='last' on EVERY GRU layer, including non-final ones.
+    % 'last' collapses the full Lseq-timestep sequence down to a single
+    % vector -- correct for the FINAL layer (needed before the regression
+    % head), but if an earlier layer also collapses, everything after it
+    % (including any subsequent "GRU" layer) only ever sees a length-1
+    % sequence and can no longer use the correlation structure across
+    % timesteps at all. With numGRULayers=2 that meant layer 1 did all
+    % the real sequence processing and layer 2 was a wasted no-op that
+    % could only degrade the signal (extra dropout/relu/randomly-init'd
+    % single-step recurrence) without adding any real depth -- exactly
+    % the kind of bug that would leave Direction 1 badly underperforming
+    % even after the data and evaluation-distribution fixes.
+    if Lyr < numGRULayers
+        outputMode = 'sequence';   % pass the full timestep sequence onward
+    else
+        outputMode = 'last';        % only the final layer collapses to a vector
+    end
     layers = [layers, ...
-        gruLayer(numHiddenUnits, 'OutputMode', 'last'), ...
+        gruLayer(numHiddenUnits, 'OutputMode', outputMode), ...
         dropoutLayer(0.01), ...
         reluLayer]; %#ok<AGROW>
 end
@@ -37,6 +55,7 @@ options = trainingOptions('adam', ...
     'MaxEpochs', maxEpochs, ...
     'MiniBatchSize', 40, ...
     'Shuffle', 'every-epoch', ...
+    'GradientThreshold', 5, ...
     'ValidationData', {XTrainSeq(valIdx), YTrainAll(valIdx, :)}, ...
     'ValidationFrequency', 30, ...
     'ExecutionEnvironment', 'cpu', ...
@@ -45,6 +64,10 @@ options = trainingOptions('adam', ...
 % NOTE: ExecutionEnvironment forced to 'cpu' to avoid CUDA_ERROR_UNKNOWN
 % crashes seen in the original package; switch to 'auto' once your GPU
 % driver/toolbox versions are confirmed compatible.
+% NOTE: GradientThreshold added because these sequences are Lseq (~64)
+% timesteps long, vs. the original codebase's single-timestep GRU
+% training -- much more prone to exploding gradients through
+% backpropagation-through-time; the original had no need for this.
 
 [gruNet, trainInfo] = trainNetwork(XTrainSeq(trainIdx), YTrainAll(trainIdx, :), layers, options);
 end

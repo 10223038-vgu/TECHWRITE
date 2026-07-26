@@ -41,10 +41,11 @@ end
 
 M = 4;
 N = 256;              % subcarriers per channel realization
-nRealizations = 20;   % SCALE UP FOR REAL RESULTS (e.g. 200+)
-maxEpochs = 20;        % SCALE UP FOR REAL RESULTS (e.g. 40-100)
+nRealizations = 200;  % was 20 -- 20 gave only ~80 training sequences total
+                       % for a 2-layer/100-unit GRU, badly underfitting
+maxEpochs = 60;        % was 20
 SNRdB_range = 0:2:12;
-nBlocksMin = 300;
+nBlocksMin = 500;      % was 300 -- smoother BER estimate per SNR point
 
 % --- shared MLP block: reuse the ORIGINAL flat i.i.d.-trained MLP.
 % Valid without retraining because each H_k is still marginally CN(0,1)
@@ -64,9 +65,32 @@ Bc_A = coherenceBandwidth(N, L_A);
 Lseq_A = round(Bc_A);
 fprintf('N=%d, L=%d -> Bc=%.1f, using Lseq=%d\n', N, L_A, Bc_A, Lseq_A);
 
-snrForTraining = 8;   % train at a representative SNR
-[seqCorr, seqShuf] = buildCorrelatedAndShuffledSequences(M, snrForTraining, Lseq_A, N, L_A, 6, nRealizations, mlpNet);
-seqIID = buildIIDSequences(M, snrForTraining, Lseq_A, numel(seqCorr.X), mlpNet);
+% Train across the SAME SNR range we'll evaluate BER over, not one fixed
+% point -- see buildCorrelatedAndShuffledSequences.m's header comment.
+% Training at a single SNR (the old snrForTraining=8) and then testing
+% across a sweep is an out-of-distribution mismatch that looks exactly
+% like "still doing random guessing" outside that one training SNR.
+%
+% stride=8 (instead of the default Lseq=64, i.e. non-overlapping windows)
+% slides overlapping windows across each realization: with N=256,
+% Lseq=64 this gives floor((256-64)/8)+1 = 25 windows per realization
+% instead of just 4, an ~6x bigger training set (nRealizations x 25 =
+% 5000 sequences here, vs. 800 before) for the SAME channel/softOutputLAS
+% simulation cost -- only GRU training time grows with the larger set.
+% 640 training sequences for a 2-layer/100-unit GRU over 64-long
+% sequences was badly data-starved, which is a large part of why
+% Direction 1 was still far underperforming even the original codebase's
+% much-simpler single-timestep GRU.
+stride_A = 8;
+snrTrainRange = SNRdB_range;
+[seqCorr, seqShuf] = buildCorrelatedAndShuffledSequences(M, snrTrainRange, Lseq_A, N, L_A, 6, nRealizations, mlpNet, stride_A);
+seqIID = buildIIDSequences(M, snrTrainRange, Lseq_A, min(numel(seqCorr.X), 1600), mlpNet);
+% NOTE: capped independently of numel(seqCorr.X). Unlike the paired
+% builder above, buildIIDSequences draws a FRESH independent channel for
+% every single timestep of every sequence (no per-realization reuse), so
+% matching seqCorr's new, much larger count 1:1 would make the IID
+% control arm alone take ~6x longer to build than everything else in
+% this script combined, for a baseline arm that isn't the main result.
 
 gruCorr = trainGRUFromSequences(seqCorr, 2, 100, maxEpochs);
 gruShuf = trainGRUFromSequences(seqShuf, 2, 100, maxEpochs);
@@ -114,7 +138,7 @@ for fi = 1:numel(LseqFactors)
     Lseq_i = max(2, round(LseqFactors(fi) * Bc_B));
     if Lseq_i > N, continue; end
     fprintf('Lseq = %d (%.2fx Bc=%.1f)\n', Lseq_i, LseqFactors(fi), Bc_B);
-    [seqCorr_i, ~] = buildCorrelatedAndShuffledSequences(M, snrForTraining, Lseq_i, N, L_B, 6, nRealizations, mlpNet);
+    [seqCorr_i, ~] = buildCorrelatedAndShuffledSequences(M, snrTrainRange, Lseq_i, N, L_B, 6, nRealizations, mlpNet, 8);
     gru_i = trainGRUFromSequences(seqCorr_i, 2, 100, maxEpochs);
     ber_vs_Lseq(fi, :) = simulateBERDirection1(M, SNRdB_range, nBlocksMin, mlpNet, gru_i, Lseq_i, N, L_B, 6, [], [], 'correlated');
 end
@@ -144,7 +168,7 @@ if isempty(refSNRidx), refSNRidx = round(numel(SNRdB_range)/2); end
 for li = 1:numel(L_values)
     L_i = L_values(li);
     fprintf('L = %d taps (Bc = %.1f, fixed Lseq = %d)\n', L_i, coherenceBandwidth(N, L_i), Lseq_C);
-    [seqCorr_i, seqShuf_i] = buildCorrelatedAndShuffledSequences(M, snrForTraining, Lseq_C, N, L_i, 6, nRealizations, mlpNet);
+    [seqCorr_i, seqShuf_i] = buildCorrelatedAndShuffledSequences(M, snrTrainRange, Lseq_C, N, L_i, 6, nRealizations, mlpNet, 4);
     gruCorr_i = trainGRUFromSequences(seqCorr_i, 2, 100, maxEpochs);
     gruShuf_i = trainGRUFromSequences(seqShuf_i, 2, 100, maxEpochs);
 
