@@ -1,5 +1,0 @@
-Quantity,SNRgainDB
-Paper: DeepLAS vs ConvLAS,2.55
-Ours: OrigDeepLAS vs ConvLAS,-28.9706761747868
-Ours: PoolingNet vs ConvLAS,-19.1942315237799
-Ours: PoolingNet vs OrigDeepLAS,9.77644465100684

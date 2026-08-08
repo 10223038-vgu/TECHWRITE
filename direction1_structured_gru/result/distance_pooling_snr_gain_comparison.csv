@@ -1,6 +1,0 @@
-Quantity,SNRgainDB
-Paper: DeepLAS vs ConvLAS,2.55
-Ours: OrigDeepLAS vs ConvLAS,-73.7653864181279
-Ours: UniformPooling vs Orig,65.9783707197193
-Ours: DistancePooling vs Orig,71.868237359844
-Ours: DistancePooling vs UniformPooling,5.88986664012471
